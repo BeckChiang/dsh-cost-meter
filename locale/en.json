@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Session cost meter",
+    "description": "Shows the cumulative cost split plus this-turn / last-turn cost under the composer; this turn's cache-read cost turns amber at ¥0.1 and red at ¥0.3, with the reason and the gap to the next line shown in the panel."
+  }
+}
