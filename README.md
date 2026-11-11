@@ -1,5 +1,7 @@
 # 会话成本计（@local/cost-meter）1.2.0
 
+仓库：<https://github.com/BeckChiang/dsh-cost-meter>（跨机可直接 `git clone` 后 `plugin_manager install_bundle`）。
+
 DeepSeek Harness 的输入框下方挂一个成本读数：**累计成本拆分** + **本轮 / 上一轮成本**，本轮缓存命中成本超线时变色告警。点开面板能看到每一笔怎么算出来的。
 
 ## 读什么
