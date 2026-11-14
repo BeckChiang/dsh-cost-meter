@@ -60,6 +60,10 @@ DeepSeek Harness 的输入框下方挂一个成本读数：**累计成本拆分*
    - 或者用 CLI（不同版本参数不同，先 `dsh plugin --help` 确认 add / local 的写法）。
 3. 装完刷新页面（Ctrl+Shift+R）。底部出现 `¥累计 · 本轮 ¥x` 即生效；没出现就重启一次桌面 app（客户端 bundle 有缓存）。
 
+## 测试
+
+`node test/smoke.mjs`：最小 React 替身直接渲染 dock 组件（20+ 断言），覆盖文案层次、高峰/空闲两态、倒计时方向与具体星期时刻、账本命中/缺席、文案长度上限（≤26 字，防止再出现短换行）。无第三方依赖，Node 20+ 可直接跑。
+
 ## 卸载
 
 `plugin_manager`：`action: set_plugin`、`target: include:cost-meter`、`enabled: false`；要连安装记录一起清就 `remove_bundle`。
