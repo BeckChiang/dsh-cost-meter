@@ -215,12 +215,22 @@ check('账本命中：说明按每步当时价计', has('累计按每步当时�
 check('账本命中：点名未收录模型', /未收录模型按默认价：mystery-model/.test(snap.all))
 check('账本命中：不显示按现价折算', !has('累计暂按现价折算，会漂移'))
 // 判据 v2：每步上下文 225k 已过 200k 黄线（累计 ¥0.0719 未过 ¥3），应显示黄档说明。
-check('判据 v2：显示每步上下文读数', /每步上下文 225k/.test(snap.all), snap.all)
+check('趋势块：每步上下文标签与数值分列', has('每步上下文') && has('225k'), snap.all)
+check('趋势块：每轮增长', has('每轮增长') && (has('+22.5k') || has('+22k')), snap.all)
+check('趋势块：再 10 轮成本', has('再 10 轮成本') && /¥0\.\d+/.test(snap.all), snap.all)
+check('趋势块：切会话首 3 轮', has('切会话首 3 轮'), snap.all)
+const trendVals = nodesOf(tree).filter((n) => n.props && n.props.style
+  && n.props.style.fontSize === '14px' && n.props.style.fontWeight === 600
+  && n.props.style.fontVariantNumeric === 'tabular-nums')
+check('趋势数字放大加色（14px 600 tabular）',
+  trendVals.length >= 3 && trendVals.every((n) => n.props.style.fontSize === '14px' && n.props.style.fontWeight === 600),
+  trendVals.map((n) => `${n.props.children}:${n.props.style.color}`).join(' | '))
+check('每步上下文用品牌蓝', trendVals.some((n) => String(n.props.children) === '225k'
+  && String(n.props.style.color).includes('brand-primary')), JSON.stringify(trendVals.map((n) => n.props.style.color)))
 check('判据 v2：两条判据并列', has('判据：每步上下文 200k 黄、400k 红') && has('判据：会话累计 ¥3 黄、¥8 红'))
 check('判据 v2：说明触发原因', has('每步上下文已过 225k 黄线'))
 check('判据 v2：给出到下一档的差额', /距红线：每步 \+175k \/ 累计 \+¥2\.9\d+/.test(snap.all), snap.all)
-check('判据 v2：给出下一步预测', /按近 3 轮节奏，再 10 轮约 ¥/.test(snap.all))
-check('判据 v2：给出切换新会话的代价', /切新会话每步约 2 万，前 3 轮约 ¥/.test(snap.all))
+
 check('fetch 命中 ledger 路由', String(globalThis.__lastUrl || '').startsWith('/api/cost-meter/ledger?id=s1'), globalThis.__lastUrl)
 check('fetch 带面板头', !!globalThis.__lastInit && globalThis.__lastInit.headers['x-cost-meter'] === '1')
 

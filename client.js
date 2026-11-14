@@ -350,18 +350,59 @@ window.__ModuleLoader__.load({
       }
 
       // 预测：按近 3 轮的每轮成本外推；上下文增长另起一行；切换后的回本代价单独一行。
-      const ctxLine = led && ctxNow !== null
-        ? fill(t('ctxLine'), {
-            ctx: ktok(ctxNow),
-            grow: ctxGrowth >= 1000 ? `+${ktok(ctxGrowth)}` : '持平',
-          })
+      // 趋势读数：数字单独成列、放大加色，文字退到 11px 标签，扫一眼就能抓到量级。
+      // 每步上下文用品牌蓝（主指标），增长超过 1k 用琥珀（在变重），成本预测用正文色。
+      const showTrend = led && ctxNow !== null
+      const growText = ctxGrowth >= 1000 ? `+${ktok(ctxGrowth)}` : ctxGrowth <= -1000 ? ktok(ctxGrowth) : '持平'
+      const growTone = ctxGrowth >= 1000
+        ? 'var(--dsw-alias-state-warn-primary)'
+        : 'var(--dsw-alias-label-tertiary)'
+      const predictText = perTurnCost !== null && perTurnCost > 0 ? money(perTurnCost * PREDICT_TURNS) : null
+      const switchText = ctxNow !== null && ctxNow > FRESH_CTX_TOKENS * 2 && perTurnCost !== null && perTurnCost > 0
+        ? money(perTurnCost * (FRESH_CTX_TOKENS / ctxNow) * 3)
         : null
-      const predictLine = led && perTurnCost !== null && perTurnCost > 0
-        ? fill(t('predict'), { n: String(PREDICT_TURNS), cost: money(perTurnCost * PREDICT_TURNS) })
-        : null
-      const switchLine = led && ctxNow !== null && perTurnCost !== null && perTurnCost > 0
-        && ctxNow > FRESH_CTX_TOKENS * 2
-        ? fill(t('switchLine'), { cost: money(perTurnCost * (FRESH_CTX_TOKENS / ctxNow) * 3) })
+      const trendRow = (key, label, value, tone) =>
+        h('div', {
+          key,
+          style: { display: 'flex', alignItems: 'baseline', gap: '8px', lineHeight: '22px' },
+        }, [
+          h('span', {
+            key: 'l',
+            style: { flex: 'none', fontSize: '11px', color: 'var(--dsw-alias-label-tertiary)' },
+          }, label),
+          h('span', {
+            key: 'v',
+            style: {
+              marginLeft: 'auto', fontSize: '14px', fontWeight: 600, letterSpacing: '-0.01em',
+              fontVariantNumeric: 'tabular-nums', color: tone || 'var(--dsw-alias-label-primary)',
+            },
+          }, value),
+        ])
+      const trendBox = showTrend
+        ? h('div', {
+            key: 'trend',
+            style: {
+              marginTop: '6px', padding: '4px 8px 6px', borderRadius: 'var(--dsw-radius-sm)',
+              border: '1px solid var(--dsw-alias-border-l1)',
+              display: 'flex', flexDirection: 'column', gap: '0px',
+            },
+          }, [
+            h('div', {
+              key: 'tl',
+              style: {
+                fontSize: '11px', lineHeight: '16px', fontWeight: 600, marginBottom: '2px',
+                color: 'var(--dsw-alias-label-tertiary)', letterSpacing: '0.04em',
+              },
+            }, t('trend')),
+            trendRow('ctx', t('ctxPerStep'), ktok(ctxNow), 'var(--dsw-alias-brand-primary)'),
+            trendRow('grow', t('growthPerTurn'), growText, growTone),
+            predictText === null
+              ? null
+              : trendRow('predict', fill(t('turnsCost'), { n: String(PREDICT_TURNS) }), predictText),
+            switchText === null
+              ? null
+              : trendRow('switch', t('switchCost'), switchText, 'var(--dsw-alias-brand-primary)'),
+          ])
         : null
 
       const ruleCtx = led ? fill(t('ruleCtx'), lv) : null
@@ -602,12 +643,10 @@ window.__ModuleLoader__.load({
             flatRow('turnCache', t('turnCache'), turnCache === null ? '—' : money(turnCache), red || hitWarn ? tone : undefined),
             statusRow,
             hint('reason', reason, tone),
+            trendBox,
             divider('hr3'),
-            hint('rule-ctx', ruleCost, 'var(--dsw-alias-label-tertiary)'),
-            ruleCtx === null ? null : hint('rule-cost', ruleCtx, 'var(--dsw-alias-label-tertiary)'),
-            ctxLine === null ? null : hint('ctx-line', ctxLine, 'var(--dsw-alias-label-secondary)'),
-            predictLine === null ? null : hint('predict', predictLine, 'var(--dsw-alias-label-secondary)'),
-            switchLine === null ? null : hint('switch', switchLine, 'var(--dsw-alias-label-secondary)'),
+            hint('rule-cost', ruleCost, 'var(--dsw-alias-label-tertiary)'),
+            ruleCtx === null ? null : hint('rule-ctx', ruleCtx, 'var(--dsw-alias-label-tertiary)'),
             hint('source', sourceLine),
             unknownLine === null ? null : hint('unknown', unknownLine, 'var(--dsw-alias-state-warn-primary)'),
           ])
@@ -694,9 +733,11 @@ window.__ModuleLoader__.load({
       toWarn: '距黄线还差',
       gapToWarn: '距黄线：每步 +{ctx} / 累计 +{cost}',
       gapToRed: '距红线：每步 +{ctx} / 累计 +{cost}',
-      ctxLine: '每步上下文 {ctx} · 每轮 {grow}',
-      predict: '按近 3 轮节奏，再 {n} 轮约 {cost}',
-      switchLine: '切新会话每步约 2 万，前 3 轮约 {cost}',
+      trend: '趋势',
+      ctxPerStep: '每步上下文',
+      growthPerTurn: '每轮增长',
+      turnsCost: '再 {n} 轮成本',
+      switchCost: '切会话首 3 轮',
       ruleCtx: '判据：每步上下文 {wct} 黄、{rct} 红',
       ruleCost: '判据：会话累计 ¥{warn} 黄、¥{red} 红',
       rule: '判据：本轮缓存 ¥{warn} 黄、¥{red} 红',
@@ -743,9 +784,11 @@ window.__ModuleLoader__.load({
       toWarn: 'Until the amber line:',
       gapToWarn: 'Until amber: +{ctx} per step / +{cost} total',
       gapToRed: 'Until red: +{ctx} per step / +{cost} total',
-      ctxLine: 'Context per step {ctx} · per turn {grow}',
-      predict: 'At the last 3 turns pace, {n} more turns ≈ {cost}',
-      switchLine: 'Fresh session starts near 20k; first 3 turns ≈ {cost}',
+      trend: 'Trend',
+      ctxPerStep: 'context per step',
+      growthPerTurn: 'growth per turn',
+      turnsCost: '{n} more turns cost',
+      switchCost: 'first 3 turns after switch',
       ruleCtx: 'Judged on per-step context: {wct} amber, {rct} red',
       ruleCost: 'Judged on session total: ¥{warn} amber, ¥{red} red',
       rule: 'Judged on cache cost this turn: ¥{warn} amber, ¥{red} red',
