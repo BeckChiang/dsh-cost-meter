@@ -1,9 +1,32 @@
 {
-  "name": "@local/cost-meter",
+  "name": "dsh-cost-meter",
   "version": "2.0.0",
-  "private": true,
+  "description": "Per-step session cost meter for the DeepSeek Harness composer dock: cumulative cost split, this-turn/last-turn cost, peak/off-peak pricing frozen at each request's start time, and context-vs-budget advice for when to hand off.",
   "type": "module",
-  "description": "Session cost meter for the DeepSeek Harness composer dock: per-step billing (each step priced at the peak/off-peak rate in force when it ran), cumulative split, this-turn / last-turn cost, amber at ¥0.1 and red at ¥0.3, compact panel with peak/off-peak window hints",
+  "license": "MIT",
+  "author": "BeckChiang",
+  "homepage": "https://github.com/BeckChiang/dsh-cost-meter#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/BeckChiang/dsh-cost-meter.git"
+  },
+  "bugs": {
+    "url": "https://github.com/BeckChiang/dsh-cost-meter/issues"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "deepseek",
+    "cost",
+    "billing",
+    "token",
+    "usage",
+    "pricing",
+    "peak",
+    "composer",
+    "dock"
+  ],
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",
@@ -17,7 +40,9 @@
     "cordis.patch.yml",
     "locale/*.json",
     "icon.svg",
-    "README.md"
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
   ],
   "dsh": {
     "bundle": {
