@@ -1,4 +1,4 @@
-# 会话成本计（@local/cost-meter）1.3.4
+# 会话成本计（@local/cost-meter）2.0.0
 
 仓库：<https://github.com/BeckChiang/dsh-cost-meter>（跨机可直接 `git clone` 后 `plugin_manager install_bundle`）。
 
@@ -99,6 +99,10 @@ DeepSeek Harness 的输入框下方挂一个成本读数：**累计成本拆分*
 - 面板新增三条读数：`每步上下文 x · 每轮 +y`、`按近 3 轮节奏，再 N 轮约 ¥z`、`切新会话每步约 2 万，前 3 轮约 ¥w`。
 - 计时段框标明「DeepSeek 官方价」、单价补 `/百万 tokens` 与「人民币；法定节假日未按高峰计」。
 - 差额行改为双读数（`距黄线/红线：每步 +x / 累计 +y`）。
+
+## 2.0.0 说明
+
+1.2.0 起「按 step 计价、历史不漂移」，1.3.x 把面板从「一堆短句」重做成「分区 + 读数 + 预测」。累计到一个整数版本：**2.0.0 = 按步计价的账本口径 + 双判据 + 容器化面板 + 趋势预测**，接口（`GET /api/cost-meter/ledger`、`lib/ledger.mjs` 导出、`conversation.composer.dock` 面板）与 1.3.x 完全兼容，没有破坏性变更——跨机安装时可以直接覆盖旧目录。
 
 ## 相对 1.3.3 的变化
 
