@@ -171,14 +171,16 @@ let tree = await mount()
 let snap = snapOf(tree)
 const trigger = snap.attrs.find((a) => a.tag === 'button')
 check('折叠态显示金额', /¥/.test(snap.all), snap.all.slice(0, 100))
-check('触发按钮 title 点明当前计时段', !!trigger && /高峰时段计价|空闲时段计价/.test(String(trigger.title)), trigger && trigger.title)
+check('触发按钮 title 点明当前计时段', !!trigger && /当前高峰时段|当前空闲时段/.test(String(trigger.title)), trigger && trigger.title)
 
 tree = await clickTrigger(tree)
 snap = snapOf(tree)
 const has = (s) => snap.all.includes(s)
 check('面板展开：显示「累计」', has('累计'))
-check('显示当前计时段', has('高峰时段计价') || has('空闲时段计价'))
-check('显示缓存单价', /缓存命中 ¥0\.0[24]\/M/.test(snap.all), snap.all.slice(0, 200))
+check('显示当前计时段', has('当前高峰时段') || has('当前空闲时段'))
+check('显示 DeepSeek 官方价', has('DeepSeek 官方价'))
+check('显示缓存单价与单位', snap.all.includes('缓存命中 ¥0.02/百万 tokens') || snap.all.includes('缓存命中 ¥0.04/百万 tokens'), snap.all.slice(0, 200))
+check('注明币种与节假日口径', has('人民币；法定节假日未按高峰计'))
 check('显示高峰窗口', has('高峰：工作日 9–12、14–18 点'))
 check('显示空闲规则', has('其余时段与周末按空闲价'))
 check('显示距切换倒计时', /距进入高峰|距进入空闲|距切换时间未知/.test(snap.all))
@@ -196,7 +198,12 @@ check('所有文案 ≤ 26 字（不折行）', long.length === 0, long.join(' /
 fetchBody = {
   ok: true, sessionId: 's1', hasPricedSteps: true,
   totals: { cost: 0.0719, cacheCost: 0.0116, inputCost: 0.0382, outputCost: 0.0221 },
-  turns: { 1: { cost: 0.031, cacheCost: 0.01, inputCost: 0.011, outputCost: 0.01 } },
+  // 每轮带上步数与 token：判据 v2 要用「每步上下文」＝(cache+input)/steps。
+  turns: {
+    1: { cost: 0.02, cacheCost: 0.008, inputCost: 0.006, outputCost: 0.006, cache: 800000, input: 100000, steps: 4 },
+    2: { cost: 0.03, cacheCost: 0.01, inputCost: 0.01, outputCost: 0.01, cache: 1000000, input: 100000, steps: 5 },
+    3: { cost: 0.0219, cacheCost: 0.008, inputCost: 0.007, outputCost: 0.0069, cache: 750000, input: 60000, steps: 3 },
+  },
   currentTurn: 1, lastAssistantTurn: 1, inFlightTurn: null,
   unknownModels: ['mystery-model'],
 }
@@ -207,6 +214,13 @@ check('账本命中：显示账本金额', /¥0\.0719|¥0\.072/.test(snap.all), 
 check('账本命中：说明按每步当时价计', has('累计按每步当时价计，不漂移'))
 check('账本命中：点名未收录模型', /未收录模型按默认价：mystery-model/.test(snap.all))
 check('账本命中：不显示按现价折算', !has('累计暂按现价折算，会漂移'))
+// 判据 v2：每步上下文 225k 已过 200k 黄线（累计 ¥0.0719 未过 ¥3），应显示黄档说明。
+check('判据 v2：显示每步上下文读数', /每步上下文 225k/.test(snap.all), snap.all)
+check('判据 v2：两条判据并列', has('判据：每步上下文 200k 黄、400k 红') && has('判据：会话累计 ¥3 黄、¥8 红'))
+check('判据 v2：说明触发原因', has('每步上下文已过 225k 黄线'))
+check('判据 v2：给出到下一档的差额', /距红线：每步 \+175k \/ 累计 \+¥2\.9\d+/.test(snap.all), snap.all)
+check('判据 v2：给出下一步预测', /按近 3 轮节奏，再 10 轮约 ¥/.test(snap.all))
+check('判据 v2：给出切换新会话的代价', /切新会话每步约 2 万，前 3 轮约 ¥/.test(snap.all))
 check('fetch 命中 ledger 路由', String(globalThis.__lastUrl || '').startsWith('/api/cost-meter/ledger?id=s1'), globalThis.__lastUrl)
 check('fetch 带面板头', !!globalThis.__lastInit && globalThis.__lastInit.headers['x-cost-meter'] === '1')
 
@@ -224,10 +238,28 @@ check('三段宽度与账本占比一致', Math.abs(widths[0] - 16.13) < 0.3 && 
 check('图例给出成本占比', ['16%', '53%', '31%'].every((x) => snap.all.includes(x)), snap.all)
 check('图例给出 token 量', ['1M', '2M', '500k'].every((x) => snap.all.includes(x)), snap.all)
 
+// ---- 2b. 红线：上下文与累计同时越线 ---------------------------------------
+fetchBody = {
+  ok: true, sessionId: 's1', hasPricedSteps: true,
+  totals: { cost: 9.4, cacheCost: 3.1, inputCost: 3.3, outputCost: 3, cache: 6200000, input: 780000, output: 480000, steps: 14 },
+  turns: {
+    1: { cost: 4.2, cacheCost: 1.4, inputCost: 1.5, outputCost: 1.3, cache: 2100000, input: 270000, steps: 4 },
+    2: { cost: 5.2, cacheCost: 1.7, inputCost: 1.8, outputCost: 1.7, cache: 4100000, input: 510000, steps: 10 },
+  },
+  currentTurn: 2, lastAssistantTurn: 2, inFlightTurn: null,
+  unknownModels: [],
+}
+tree = await mount()
+tree = await clickTrigger(tree)
+snap = snapOf(tree)
+check('红线：徽标显示超限', snap.all.includes('超限'), snap.all)
+check('红线：说明两条线都超', snap.all.includes('上下文与累计都超红线，该交接'))
+check('红线：不再显示差额', !/距红线|距黄线/.test(snap.all), snap.all)
+
 // ---- 3. 峰谷两态（拨时钟）------------------------------------------------
 for (const [label, iso, expect] of [
-  ['周三 11:00 高峰', '2026-11-11T03:00:00Z', '高峰时段计价'],
-  ['周三 20:30 空闲', '2026-11-11T12:30:00Z', '空闲时段计价'],
+  ['周三 11:00 高峰', '2026-11-11T03:00:00Z', '当前高峰时段'],
+  ['周三 20:30 空闲', '2026-11-11T12:30:00Z', '当前空闲时段'],
 ]) {
   const RealDate = Date
   const Fixed = class extends RealDate {
@@ -239,7 +271,7 @@ for (const [label, iso, expect] of [
   tree = await clickTrigger(tree)
   const s2 = snapOf(tree)
   check(`${label}：显示「${expect}」`, s2.all.includes(expect), s2.all.slice(0, 160))
-  check(`${label}：倒计时方向正确`, expect === '高峰时段计价' ? s2.all.includes('距进入空闲') : s2.all.includes('距进入高峰'))
+  check(`${label}：倒计时方向正确`, expect === '当前高峰时段' ? s2.all.includes('距进入空闲') : s2.all.includes('距进入高峰'))
   check(`${label}：给出切换的具体星期与时刻`, /（周[一二三四五六日] \d{2}:\d{2}）/.test(s2.all), s2.all.slice(0, 200))
   globalThis.Date = RealDate
 }

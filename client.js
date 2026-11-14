@@ -82,14 +82,22 @@ window.__ModuleLoader__.load({
       return mm ? `${hh} 小时 ${mm} 分` : `${hh} 小时`
     }
 
-    // 颜色判据落在「本轮缓存命中成本」上：≥ ¥0.3 红，≥ ¥0.1 黄。
-    // 为什么不看「单条消息」：单条请求的缓存命中成本 ≈ 上下文 × 缓存单价
-    // （flash 高峰 ¥0.04/百万），70k 上下文一步只有 ¥0.003，永远到不了阈值；
-    // 本轮会随步数累加，同样的判据才有意义。
-    // 档位：¥0.1 / ¥0.3 是按本机实测的单轮成本量级（¥0.1–0.3）定的；
-    // 上下文 70k 时约 35 步到黄、105 步到红，与「单会话 40 回合就该考虑交接」基本对齐。
+    // 判据（1.3.2 起）：两条正交指标，任一越线就变色。
+    // ① 每步上下文 = 每步要重付一次的输入量（cacheRead + 非缓存输入）。切换会话真正能省的是它，
+    //    且与「这轮跑了几步」无关——旧口径「本轮缓存命中金额」把步数也乘进去了，短轮多步会误报。
+    // 用 token 而不是人民币当阈值，是因为它不该跟着峰谷时段跳：空闲价打折，上下文不会变轻。
+    // ② 会话累计成本：钱包的真实支出，绝对预算兜底。
+    // 旧口径（本轮缓存命中 ¥0.1/¥0.3）只保留给「账本拿不到」的退路。
+    const WARN_CTX_TOKENS = 200_000
+    const RED_CTX_TOKENS = 400_000
+    const WARN_SESSION_YUAN = 3
+    const RED_SESSION_YUAN = 8
     const RED_CACHE_YUAN = 0.3
     const WARN_CACHE_YUAN = 0.1
+
+    // 切到新会话后，每步上下文大致回落到这个量级（经验值：系统提示 + 首轮重读必要文件）。
+    const FRESH_CTX_TOKENS = 20_000
+    const PREDICT_TURNS = 10
 
     // 与内置 ContextMeter 同一套排版常量。
     const FONT_SECONDARY = 'var(--dsh-content-font-size-secondary, 13px)'
@@ -262,8 +270,39 @@ window.__ModuleLoader__.load({
           ? cost(turn.cache, price.cacheRead)
           : null
 
-      const red = turnCache !== null && turnCache >= RED_CACHE_YUAN
-      const hitWarn = !red && turnCache !== null && turnCache >= WARN_CACHE_YUAN
+      // ---- 判据：两条正交指标 ------------------------------------------------
+      // 每轮按账本里的 turn 桶求「每步上下文」（cacheRead + 非缓存输入）与「本轮成本」，
+      // 取最近 3 轮的中位数做平滑，避免单轮步数抖动。
+      const turnNums = led
+        ? Object.keys(led.turns).map(Number).filter((n) => Number.isFinite(n)).sort((a, b) => a - b)
+        : []
+      const turnInfo = turnNums.map((n) => {
+        const b = led.turns[String(n)]
+        const st = b.steps || 0
+        return { n, cost: b.cost || 0, ctx: st ? (b.cache + b.input) / st : 0 }
+      })
+      const median = (arr) => {
+        if (!arr.length) return null
+        const a = [...arr].sort((x, y) => x - y)
+        const m = Math.floor(a.length / 2)
+        return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2
+      }
+      const recent = turnInfo.slice(-3)
+      const ctxNow = recent.length ? median(recent.map((x) => x.ctx)) : null
+      const perTurnCost = recent.length ? median(recent.map((x) => x.cost)) : null
+      // 上下文每轮增长：首轮到末轮的平均斜率，用来预测「再跑几轮会有多重」。
+      const ctxGrowth = turnInfo.length >= 2
+        ? (turnInfo[turnInfo.length - 1].ctx - turnInfo[0].ctx) / (turnInfo.length - 1)
+        : 0
+
+      const ctxRedHit = ctxNow !== null && ctxNow >= RED_CTX_TOKENS
+      const ctxWarnHit = !ctxRedHit && ctxNow !== null && ctxNow >= WARN_CTX_TOKENS
+      const costRedHit = ledTotals ? ledTotals.cost >= RED_SESSION_YUAN : false
+      const costWarnHit = !costRedHit && ledTotals ? ledTotals.cost >= WARN_SESSION_YUAN : false
+
+      // 账本拿不到时退回旧口径（只看本轮缓存命中金额），面板会明说。
+      const red = led ? ctxRedHit || costRedHit : turnCache !== null && turnCache >= RED_CACHE_YUAN
+      const hitWarn = !red && (led ? ctxWarnHit || costWarnHit : turnCache !== null && turnCache >= WARN_CACHE_YUAN)
 
       const tone = red
         ? 'var(--dsw-alias-state-error-primary)'
@@ -273,24 +312,60 @@ window.__ModuleLoader__.load({
 
       const turnLabel = running ? t('turn') : t('lastTurn')
 
-      // 文案里的 ¥0.1 / ¥0.3 由常量插值，调档位只改上面两个常量。
-      const lv = { warn: String(WARN_CACHE_YUAN), red: String(RED_CACHE_YUAN) }
-
-      // 每条提示独立成行，且都短到不会在面板宽度内折行：
-      // 短句 + 宽面板，避免出现「只剩两三个字」的短换行。
-      let reason = fill(t('reasonOk'), lv)
-      if (turnCache === null) reason = fill(t('reasonUnknown'), lv)
-      else if (red) reason = fill(t('reasonRed'), lv)
-      else if (hitWarn) reason = fill(t('reasonWarn'), lv)
-
-      // 差额单独一行：只写「距某线还差多少」，不和其他口径信息挤在一起。
-      let gapLine = null
-      if (turnCache !== null) {
-        if (red) gapLine = null
-        else if (hitWarn) gapLine = `${fill(t('toRed'), lv)} ${money(RED_CACHE_YUAN - turnCache)}`
-        else gapLine = `${fill(t('toWarn'), lv)} ${money(WARN_CACHE_YUAN - turnCache)}`
+      // 旧口径的插值变量（退路用），以及新口径的两组阈值。
+      const lvLegacy = { warn: String(WARN_CACHE_YUAN), red: String(RED_CACHE_YUAN) }
+      const lv = {
+        warn: String(WARN_SESSION_YUAN), red: String(RED_SESSION_YUAN),
+        wct: ktok(WARN_CTX_TOKENS), rct: ktok(RED_CTX_TOKENS),
       }
-      const ruleLine = fill(t('rule'), lv)
+      const costNow = ledTotals ? ledTotals.cost : null
+
+      // 每条提示独立成行，且都短到不会在面板宽度内折行。
+      let reason
+      if (led) {
+        if (ctxRedHit && costRedHit) reason = t('reasonBothRed')
+        else if (ctxRedHit) reason = fill(t('reasonCtxRed'), { ctx: ktok(ctxNow) })
+        else if (costRedHit) reason = fill(t('reasonCostRed'), lv)
+        else if (ctxWarnHit && costWarnHit) reason = t('reasonBothWarn')
+        else if (ctxWarnHit) reason = fill(t('reasonCtxWarn'), { ctx: ktok(ctxNow) })
+        else if (costWarnHit) reason = fill(t('reasonCostWarn'), lv)
+        else reason = t('reasonOk')
+      } else if (turnCache === null) reason = t('reasonUnknown')
+      else if (red) reason = fill(t('reasonRed'), lvLegacy)
+      else if (hitWarn) reason = fill(t('reasonWarn'), lvLegacy)
+      else reason = fill(t('reasonLegacyOk'), lvLegacy)
+
+      // 差额：同时给出两条指标各自离黄线还差多少，便于判断先撞哪条。
+      let gapLine = null
+      if (led && !red && ctxNow !== null) {
+        const ctxTarget = ctxWarnHit ? RED_CTX_TOKENS : WARN_CTX_TOKENS
+        const costTarget = costWarnHit ? RED_SESSION_YUAN : WARN_SESSION_YUAN
+        gapLine = fill(t(ctxWarnHit || costWarnHit ? 'gapToRed' : 'gapToWarn'), {
+          ctx: ktok(Math.max(1000, ctxTarget - ctxNow)),
+          cost: money(Math.max(0, costTarget - (costNow || 0))),
+        })
+      } else if (!led && turnCache !== null && !red) {
+        const target = hitWarn ? RED_CACHE_YUAN : WARN_CACHE_YUAN
+        gapLine = `${fill(t('toWarn'), lvLegacy)} ${money(target - turnCache)}`
+      }
+
+      // 预测：按近 3 轮的每轮成本外推；上下文增长另起一行；切换后的回本代价单独一行。
+      const ctxLine = led && ctxNow !== null
+        ? fill(t('ctxLine'), {
+            ctx: ktok(ctxNow),
+            grow: ctxGrowth >= 1000 ? `+${ktok(ctxGrowth)}` : '持平',
+          })
+        : null
+      const predictLine = led && perTurnCost !== null && perTurnCost > 0
+        ? fill(t('predict'), { n: String(PREDICT_TURNS), cost: money(perTurnCost * PREDICT_TURNS) })
+        : null
+      const switchLine = led && ctxNow !== null && perTurnCost !== null && perTurnCost > 0
+        && ctxNow > FRESH_CTX_TOKENS * 2
+        ? fill(t('switchLine'), { cost: money(perTurnCost * (FRESH_CTX_TOKENS / ctxNow) * 3) })
+        : null
+
+      const ruleCtx = led ? fill(t('ruleCtx'), lv) : null
+      const ruleCost = led ? fill(t('ruleCost'), lv) : fill(t('rule'), lvLegacy)
       // 计价口径写清楚：账本在就说明「历史按当时价」，没接上就明说在按现价折算。
       const sourceLine = led ? t('ledgerExact') : t('ledgerFallback')
       const unknownLine = led && led.unknownModels && led.unknownModels.length
@@ -420,6 +495,22 @@ window.__ModuleLoader__.load({
         },
       }, [
         h('div', {
+          key: 'h',
+          style: { display: 'flex', alignItems: 'baseline', gap: '8px', lineHeight: '16px' },
+        }, [
+          h('span', {
+            key: 'b',
+            style: { flex: 'none', fontSize: '11px', fontWeight: 600, color: 'var(--dsw-alias-label-secondary)' },
+          }, t('priceBrand')),
+          h('span', {
+            key: 'r',
+            style: {
+              marginLeft: 'auto', fontSize: '11px', fontVariantNumeric: 'tabular-nums',
+              color: 'var(--dsw-alias-label-secondary)', whiteSpace: 'nowrap',
+            },
+          }, fill(t('cacheRate'), { rate: String(price.cacheRead) })),
+        ]),
+        h('div', {
           key: 't',
           style: { display: 'flex', alignItems: 'center', gap: '6px', lineHeight: '18px' },
         }, [
@@ -434,19 +525,13 @@ window.__ModuleLoader__.load({
             key: 'k',
             style: { fontSize: '12px', fontWeight: 600, color: 'var(--dsw-alias-label-primary)' },
           }, price.peak ? t('peakNow') : t('offNow')),
-          h('span', {
-            key: 'r',
-            style: {
-              marginLeft: 'auto', fontSize: '11px', fontVariantNumeric: 'tabular-nums',
-              color: 'var(--dsw-alias-label-secondary)',
-            },
-          }, fill(t('cacheRate'), { rate: String(price.cacheRead) })),
         ]),
         hint('w1', t('peakWindows')),
         hint('w2', t('offWindows')),
         hint('nx', boundary
           ? fill(price.peak ? t('nextOff') : t('nextPeak'), { d: dur(boundary.mins), at: boundary.label })
           : t('nextUnknown'), 'var(--dsw-alias-label-secondary)'),
+        hint('note', t('priceNote'), 'var(--dsw-alias-label-tertiary)'),
       ])
 
       // 状态徽标 + 距阈值差额：颜色含义直接写在徽标文字里，不用只靠颜色猜。
@@ -518,7 +603,11 @@ window.__ModuleLoader__.load({
             statusRow,
             hint('reason', reason, tone),
             divider('hr3'),
-            hint('rule', ruleLine),
+            hint('rule-ctx', ruleCost, 'var(--dsw-alias-label-tertiary)'),
+            ruleCtx === null ? null : hint('rule-cost', ruleCtx, 'var(--dsw-alias-label-tertiary)'),
+            ctxLine === null ? null : hint('ctx-line', ctxLine, 'var(--dsw-alias-label-secondary)'),
+            predictLine === null ? null : hint('predict', predictLine, 'var(--dsw-alias-label-secondary)'),
+            switchLine === null ? null : hint('switch', switchLine, 'var(--dsw-alias-label-secondary)'),
             hint('source', sourceLine),
             unknownLine === null ? null : hint('unknown', unknownLine, 'var(--dsw-alias-state-warn-primary)'),
           ])
@@ -563,6 +652,7 @@ window.__ModuleLoader__.load({
     }
 
     // 所有提示句都控制在面板宽度内（≤ 24 字），避免出现只剩两三个字的短换行。
+    // 文案按用户要求固定中文：即使界面语言是英文也不会切成英文。
     const ZH = {
       title: '会话成本',
       total: '累计',
@@ -574,16 +664,11 @@ window.__ModuleLoader__.load({
       cache: '缓存命中',
       input: '非缓存',
       output: '输出',
-      reasonOk: '本轮缓存未到 ¥{warn} 黄线，不变色',
-      reasonWarn: '本轮缓存已过 ¥{warn} 黄线，变黄',
-      reasonRed: '本轮缓存已过 ¥{red} 红线，变红',
-      reasonUnknown: '本轮起点未知，下一轮恢复',
-      toWarn: '距黄线还差',
-      toRed: '距红线还差',
-      rule: '判据：本轮缓存 ¥{warn} 黄、¥{red} 红',
-      peakNow: '高峰时段计价',
-      offNow: '空闲时段计价',
-      cacheRate: '缓存命中 ¥{rate}/M',
+      priceBrand: 'DeepSeek 官方价',
+      cacheRate: '缓存命中 ¥{rate}/百万 tokens',
+      priceNote: '人民币；法定节假日未按高峰计',
+      peakNow: '当前高峰时段',
+      offNow: '当前空闲时段',
       peakWindows: '高峰：工作日 9–12、14–18 点',
       offWindows: '其余时段与周末按空闲价',
       nextPeak: '距进入高峰 {d}（{at}）',
@@ -593,6 +678,28 @@ window.__ModuleLoader__.load({
       stWarn: '注意',
       stRed: '超限',
       stUnknown: '待定',
+      // 判据 v2：每步上下文与会话累计两条线，任一越线就变色。
+      reasonOk: '每步上下文与累计都在黄线内',
+      reasonBothWarn: '上下文与累计都已过黄线',
+      reasonCtxWarn: '每步上下文已过 {ctx} 黄线',
+      reasonCostWarn: '会话累计已过 ¥{warn} 黄线',
+      reasonBothRed: '上下文与累计都超红线，该交接',
+      reasonCtxRed: '每步上下文已过 {ctx} 红线',
+      reasonCostRed: '会话累计已过 ¥{red} 红线',
+      // 账本拿不到时的旧口径文案。
+      reasonLegacyOk: '本轮缓存未到 ¥{warn} 黄线',
+      reasonWarn: '本轮缓存已过 ¥{warn} 黄线',
+      reasonRed: '本轮缓存已过 ¥{red} 红线',
+      reasonUnknown: '本轮起点未知，下一轮恢复',
+      toWarn: '距黄线还差',
+      gapToWarn: '距黄线：每步 +{ctx} / 累计 +{cost}',
+      gapToRed: '距红线：每步 +{ctx} / 累计 +{cost}',
+      ctxLine: '每步上下文 {ctx} · 每轮 {grow}',
+      predict: '按近 3 轮节奏，再 {n} 轮约 {cost}',
+      switchLine: '切新会话每步约 2 万，前 3 轮约 {cost}',
+      ruleCtx: '判据：每步上下文 {wct} 黄、{rct} 红',
+      ruleCost: '判据：会话累计 ¥{warn} 黄、¥{red} 红',
+      rule: '判据：本轮缓存 ¥{warn} 黄、¥{red} 红',
       ledgerExact: '累计按每步当时价计，不漂移',
       ledgerFallback: '累计暂按现价折算，会漂移',
       ledgerUnknown: '未收录模型按默认价：{models}',
@@ -608,18 +715,13 @@ window.__ModuleLoader__.load({
       cache: 'cache hit',
       input: 'uncached',
       output: 'output',
-      reasonOk: 'Cache cost this turn is below the ¥{warn} amber line; the reading stays neutral.',
-      reasonWarn: 'Cache cost this turn passed ¥{warn}; the reading turned amber.',
-      reasonRed: 'Cache cost this turn passed ¥{red}; the reading turned red.',
-      reasonUnknown: 'Turn start unknown; it recovers on the next turn.',
-      toWarn: 'Until the amber line:',
-      toRed: 'Until the red line:',
-      rule: 'Judged on cache cost this turn: ¥{warn} amber, ¥{red} red',
-      peakNow: 'peak pricing',
-      offNow: 'off-peak pricing',
-      cacheRate: 'cache hit ¥{rate}/M',
+      priceBrand: 'DeepSeek list price',
+      cacheRate: 'cache hit ¥{rate}/M tokens',
+      priceNote: 'CNY; public holidays billed as off-peak',
+      peakNow: 'peak window now',
+      offNow: 'off-peak now',
       peakWindows: 'Peak: weekdays 9–12, 14–18',
-      offWindows: 'Off-peak the rest of the time',
+      offWindows: 'Everything else is off-peak',
       nextPeak: 'Peak in {d} ({at})',
       nextOff: 'Off-peak in {d} ({at})',
       nextUnknown: 'Next switch unknown',
@@ -627,6 +729,26 @@ window.__ModuleLoader__.load({
       stWarn: 'watch',
       stRed: 'over',
       stUnknown: 'n/a',
+      reasonOk: 'Per-step context and total are inside the amber line',
+      reasonBothWarn: 'Both context and total passed the amber line',
+      reasonCtxWarn: 'Per-step context passed {ctx}',
+      reasonCostWarn: 'Session total passed ¥{warn}',
+      reasonBothRed: 'Context and total both over the red line; time to hand off',
+      reasonCtxRed: 'Per-step context passed {ctx}',
+      reasonCostRed: 'Session total passed ¥{red}',
+      reasonLegacyOk: 'Cache cost this turn is below the ¥{warn} amber line',
+      reasonWarn: 'Cache cost this turn passed ¥{warn}',
+      reasonRed: 'Cache cost this turn passed ¥{red}',
+      reasonUnknown: 'Turn start unknown; it recovers on the next turn.',
+      toWarn: 'Until the amber line:',
+      gapToWarn: 'Until amber: +{ctx} per step / +{cost} total',
+      gapToRed: 'Until red: +{ctx} per step / +{cost} total',
+      ctxLine: 'Context per step {ctx} · per turn {grow}',
+      predict: 'At the last 3 turns pace, {n} more turns ≈ {cost}',
+      switchLine: 'Fresh session starts near 20k; first 3 turns ≈ {cost}',
+      ruleCtx: 'Judged on per-step context: {wct} amber, {rct} red',
+      ruleCost: 'Judged on session total: ¥{warn} amber, ¥{red} red',
+      rule: 'Judged on cache cost this turn: ¥{warn} amber, ¥{red} red',
       ledgerExact: 'Each step priced at its own rate; the total never drifts.',
       ledgerFallback: 'Host ledger unavailable; the total is converted at the current rate and drifts.',
       ledgerUnknown: 'Unknown models priced at the default rate: {models}',
