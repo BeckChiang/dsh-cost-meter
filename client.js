@@ -37,6 +37,51 @@ window.__ModuleLoader__.load({
       return { ...(peak ? entry.peak : entry.off), peak }
     }
 
+    // 下一个峰谷切换点（北京时区）。高峰窗口是工作日 9–12、14–18，周末整天空闲，
+    // 所以周六、周日之后的下一个切换点是周一 9:00。
+    // 返回 { kind: 'peak' | 'off', mins }，mins 为距切换的分钟数。
+    function nextBoundary(date) {
+      try {
+        const parts = new Intl.DateTimeFormat('en-US', {
+          timeZone: 'Asia/Shanghai', hour12: false, weekday: 'short', hour: '2-digit', minute: '2-digit',
+        }).formatToParts(date)
+        const f = {}
+        for (const p of parts) f[p.type] = p.value
+        const wd = { Mon: 0, Tue: 1, Wed: 2, Thu: 3, Fri: 4, Sat: 5, Sun: 6 }[f.weekday]
+        if (wd === undefined) return null
+        const nowMins = wd * 1440 + (Number(f.hour) % 24) * 60 + Number(f.minute)
+        const marks = [[540, 'peak'], [720, 'off'], [840, 'peak'], [1080, 'off']]
+        let best = null
+        for (let d = 0; d < 14; d += 1) {
+          const dow = (wd + d) % 7
+          if (dow >= 5) continue
+          for (const [m, kind] of marks) {
+            const at = (wd + d) * 1440 + m
+            if (at <= nowMins) continue
+            if (!best || at < best.at) best = { at, kind, m }
+          }
+        }
+        if (!best) return null
+        // 具体到「周一 09:00」，比只有倒计时更好定位——这是用户最容易被忽略的信息。
+        const WEEK = ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
+        const day = WEEK[Math.floor(best.at / 1440) % 7]
+        const hm = `${String(Math.floor(best.m / 60)).padStart(2, '0')}:${String(best.m % 60).padStart(2, '0')}`
+        return { kind: best.kind, mins: best.at - nowMins, label: `${day} ${hm}` }
+      } catch (_) {
+        return null
+      }
+    }
+
+    // 「1 小时 12 分」这类短时长，避免提示里出现只剩两位数的折行；跨天时用「1 天 23 小时」。
+    function dur(mins) {
+      const dd = Math.floor(mins / 1440)
+      const hh = Math.floor((mins % 1440) / 60)
+      const mm = mins % 60
+      if (dd > 0) return hh ? `${dd} 天 ${hh} 小时` : `${dd} 天`
+      if (hh <= 0) return `${mm} 分钟`
+      return mm ? `${hh} 小时 ${mm} 分` : `${hh} 小时`
+    }
+
     // 颜色判据落在「本轮缓存命中成本」上：≥ ¥0.3 红，≥ ¥0.1 黄。
     // 为什么不看「单条消息」：单条请求的缓存命中成本 ≈ 上下文 × 缓存单价
     // （flash 高峰 ¥0.04/百万），70k 上下文一步只有 ¥0.003，永远到不了阈值；
@@ -150,7 +195,7 @@ window.__ModuleLoader__.load({
         const r = triggerRef.current.getBoundingClientRect()
         setPos({
           bottom: Math.max(8, window.innerHeight - r.top + 8),
-          left: Math.max(8, Math.min(r.left - 8, window.innerWidth - 300)),
+          left: Math.max(8, Math.min(r.left - 8, window.innerWidth - 360)),
         })
       }, [open])
 
@@ -231,34 +276,55 @@ window.__ModuleLoader__.load({
       // 文案里的 ¥0.1 / ¥0.3 由常量插值，调档位只改上面两个常量。
       const lv = { warn: String(WARN_CACHE_YUAN), red: String(RED_CACHE_YUAN) }
 
-      // 变色原因：面板里直接写清读数位置、还差多少、以及判据本身，不用再猜。
-      const small = { marginTop: '2px', fontSize: '11px', lineHeight: '16px' }
+      // 每条提示独立成行，且都短到不会在面板宽度内折行：
+      // 短句 + 宽面板，避免出现「只剩两三个字」的短换行。
       let reason = fill(t('reasonOk'), lv)
-      let gapLine = null
-      if (turnCache === null) {
-        reason = fill(t('reasonUnknown'), lv)
-      } else if (red) {
-        reason = fill(t('reasonRed'), lv)
-      } else if (hitWarn) {
-        reason = fill(t('reasonWarn'), lv)
-        gapLine = `${fill(t('toRed'), lv)} ${money(RED_CACHE_YUAN - turnCache)}`
-      } else {
-        gapLine = `${fill(t('toWarn'), lv)} ${money(WARN_CACHE_YUAN - turnCache)}`
-      }
-      const ruleLine = `${fill(t('rule'), lv)} · ¥${price.cacheRead}/M ${price.peak ? t('peak') : t('offPeak')}`
-      // 计价口径写清楚：账本在就说明「历史按当时价」，没接上就明说在按现价折算。
-      const sourceLine = led
-        ? led.unknownModels && led.unknownModels.length
-          ? fill(`${t('ledgerExact')} ${t('ledgerUnknown')}`, { models: led.unknownModels.join('、') })
-          : t('ledgerExact')
-        : t('ledgerFallback')
+      if (turnCache === null) reason = fill(t('reasonUnknown'), lv)
+      else if (red) reason = fill(t('reasonRed'), lv)
+      else if (hitWarn) reason = fill(t('reasonWarn'), lv)
 
-      const statRow = (key, label, value, share) =>
+      // 差额单独一行：只写「距某线还差多少」，不和其他口径信息挤在一起。
+      let gapLine = null
+      if (turnCache !== null) {
+        if (red) gapLine = null
+        else if (hitWarn) gapLine = `${fill(t('toRed'), lv)} ${money(RED_CACHE_YUAN - turnCache)}`
+        else gapLine = `${fill(t('toWarn'), lv)} ${money(WARN_CACHE_YUAN - turnCache)}`
+      }
+      const ruleLine = fill(t('rule'), lv)
+      // 计价口径写清楚：账本在就说明「历史按当时价」，没接上就明说在按现价折算。
+      const sourceLine = led ? t('ledgerExact') : t('ledgerFallback')
+      const unknownLine = led && led.unknownModels && led.unknownModels.length
+        ? fill(t('ledgerUnknown'), { models: led.unknownModels.join('、') })
+        : null
+
+      // 当前处于高峰还是空闲，以及距下一次切换还有多久——这是最容易被忽略的一行，
+      // 单独放进一个描边框里，不和判据、口径混在一起。
+      const boundary = nextBoundary(new Date())
+      const statusText = red
+        ? t('stRed')
+        : hitWarn
+          ? t('stWarn')
+          : turnCache === null
+            ? t('stUnknown')
+            : t('stOk')
+
+      // 行内三栏：中文标签 / token 数 / 占比条 / 金额。标签与数字分列，避免「数字挤在标签里」。
+      const statRow = (key, label, tokens, value, share) =>
         h('div', {
           key,
-          style: { display: 'flex', alignItems: 'center', gap: '8px' },
+          style: { display: 'flex', alignItems: 'center', gap: '8px', lineHeight: '20px' },
         }, [
-          h('span', { key: 'l', style: { flex: 'none' } }, label),
+          h('span', {
+            key: 'l',
+            style: { flex: 'none', width: '58px', color: 'var(--dsw-alias-label-secondary)' },
+          }, label),
+          h('span', {
+            key: 't',
+            style: {
+              flex: 'none', width: '50px', textAlign: 'right', fontSize: '11px',
+              color: 'var(--dsw-alias-label-tertiary)', fontVariantNumeric: 'tabular-nums',
+            },
+          }, tokens),
           h('span', {
             key: 'b',
             style: {
@@ -267,15 +333,17 @@ window.__ModuleLoader__.load({
             },
           }, h('span', {
             style: {
-              display: 'block', height: '100%', width: `${Math.round(share * 100)}%`,
+              display: 'block', height: '100%',
+              width: `${Math.round(Math.max(0, Math.min(1, share)) * 100)}%`,
               background: 'var(--dsw-alias-brand-primary)', opacity: 0.8,
             },
           })),
           h('span', {
             key: 'v',
             style: {
-              flex: 'none', width: '56px', textAlign: 'right',
-              color: 'var(--dsw-alias-label-primary)', fontWeight: 500,
+              flex: 'none', width: '60px', textAlign: 'right', whiteSpace: 'nowrap',
+              color: 'var(--dsw-alias-label-primary)', fontWeight: 600,
+              fontVariantNumeric: 'tabular-nums',
             },
           }, value),
         ])
@@ -283,14 +351,101 @@ window.__ModuleLoader__.load({
       const flatRow = (key, label, value, color) =>
         h('div', {
           key,
-          style: { display: 'flex', alignItems: 'center', gap: '6px', color },
+          style: { display: 'flex', alignItems: 'baseline', gap: '8px', lineHeight: '20px' },
         }, [
-          h('span', { key: 'l' }, label),
+          h('span', { key: 'l', style: { flex: 'none', color: 'var(--dsw-alias-label-secondary)' } }, label),
           h('span', {
             key: 'v',
-            style: { marginLeft: 'auto', fontVariantNumeric: 'tabular-nums', fontWeight: 500 },
+            style: {
+              marginLeft: 'auto', flex: 'none', whiteSpace: 'nowrap',
+              fontVariantNumeric: 'tabular-nums', fontWeight: 600,
+              color: color || 'var(--dsw-alias-label-primary)',
+            },
           }, value),
         ])
+
+      // 分区标题：小一号、加粗、带字距，和正文行拉开层次。
+      const sectionLabel = (key, text) =>
+        h('div', {
+          key,
+          style: {
+            fontSize: '11px', lineHeight: '16px', fontWeight: 600,
+            color: 'var(--dsw-alias-label-tertiary)', letterSpacing: '0.04em',
+          },
+        }, text)
+
+      const hint = (key, text, color) =>
+        h('div', {
+          key,
+          style: { fontSize: '11px', lineHeight: '16px', color: color || 'var(--dsw-alias-label-tertiary)' },
+        }, text)
+
+      const divider = (key) =>
+        h('div', {
+          key,
+          style: { height: '1px', background: 'var(--dsw-alias-border-l1)', margin: '6px 0' },
+        })
+
+      // 计时段：当前是高峰还是空闲、单价多少、窗口怎么算、多久后切换。
+      // 四行短句，任意一行都不会折行，也不会和判据混在一起。
+      const periodBox = h('div', {
+        key: 'period',
+        style: {
+          marginTop: '6px', padding: '6px 8px', borderRadius: 'var(--dsw-radius-sm)',
+          border: '1px solid var(--dsw-alias-border-l1)',
+          display: 'flex', flexDirection: 'column', gap: '1px',
+        },
+      }, [
+        h('div', {
+          key: 't',
+          style: { display: 'flex', alignItems: 'center', gap: '6px', lineHeight: '18px' },
+        }, [
+          h('span', {
+            key: 'd',
+            style: {
+              flex: 'none', width: '6px', height: '6px', borderRadius: '3px',
+              background: price.peak ? 'var(--dsw-alias-state-warn-primary)' : 'var(--dsw-alias-brand-primary)',
+            },
+          }),
+          h('span', {
+            key: 'k',
+            style: { fontSize: '12px', fontWeight: 600, color: 'var(--dsw-alias-label-primary)' },
+          }, price.peak ? t('peakNow') : t('offNow')),
+          h('span', {
+            key: 'r',
+            style: {
+              marginLeft: 'auto', fontSize: '11px', fontVariantNumeric: 'tabular-nums',
+              color: 'var(--dsw-alias-label-secondary)',
+            },
+          }, fill(t('cacheRate'), { rate: String(price.cacheRead) })),
+        ]),
+        hint('w1', t('peakWindows')),
+        hint('w2', t('offWindows')),
+        hint('nx', boundary
+          ? fill(price.peak ? t('nextOff') : t('nextPeak'), { d: dur(boundary.mins), at: boundary.label })
+          : t('nextUnknown'), 'var(--dsw-alias-label-secondary)'),
+      ])
+
+      // 状态徽标 + 距阈值差额：颜色含义直接写在徽标文字里，不用只靠颜色猜。
+      const statusRow = h('div', {
+        key: 'status',
+        style: { display: 'flex', alignItems: 'center', gap: '8px', marginTop: '2px', lineHeight: '18px' },
+      }, [
+        h('span', {
+          key: 'pill',
+          style: {
+            flex: 'none', padding: '0 6px', borderRadius: '9px', whiteSpace: 'nowrap',
+            border: `1px solid ${tone}`, color: tone, fontSize: '11px', fontWeight: 600,
+          },
+        }, statusText),
+        gapLine === null ? null : h('span', {
+          key: 'gap',
+          style: {
+            marginLeft: 'auto', fontSize: '11px', whiteSpace: 'nowrap',
+            color: 'var(--dsw-alias-label-secondary)', fontVariantNumeric: 'tabular-nums',
+          },
+        }, gapLine),
+      ])
 
       const panelBody = open && pos
         ? h('div', {
@@ -300,7 +455,7 @@ window.__ModuleLoader__.load({
             style: {
               position: 'fixed', bottom: `${pos.bottom}px`, left: `${pos.left}px`,
               zIndex: 1100, boxSizing: 'border-box',
-              width: 'min(288px, calc(100vw - 24px))',
+              width: 'min(340px, calc(100vw - 24px))',
               borderRadius: 'var(--dsw-radius-lg)',
               background: 'var(--dsw-specific-menu)',
               backdropFilter: 'var(--dsw-menu-backdrop-filter)',
@@ -311,29 +466,38 @@ window.__ModuleLoader__.load({
               display: 'flex', flexDirection: 'column', gap: '2px',
             },
           }, [
-            flatRow('head', t('total'), money(total), 'var(--dsw-alias-label-secondary)'),
-            statRow('cache', `${t('cache')} ${ktok(cached)}`, money(cacheCost), total ? cacheCost / total : 0),
-            statRow('input', `${t('input')} ${ktok(uncached)}`, money(inputCost), total ? inputCost / total : 0),
-            statRow('output', `${t('output')} ${ktok(output)}`, money(outputCost), total ? outputCost / total : 0),
+            // 累计：标签小、金额大，一眼分清「标题」与「读数」。
             h('div', {
-              key: 'hr',
-              style: { height: '1px', background: 'var(--dsw-alias-border-l1)', margin: '6px 0' },
-            }),
-            flatRow('turn', turnLabel, turnCost === null ? '—' : money(turnCost), tone),
+              key: 'head',
+              style: { display: 'flex', alignItems: 'baseline', gap: '8px' },
+            }, [
+              h('span', {
+                key: 'l',
+                style: { fontSize: '11px', color: 'var(--dsw-alias-label-tertiary)' },
+              }, t('total')),
+              h('span', {
+                key: 'v',
+                style: {
+                  marginLeft: 'auto', fontSize: '18px', lineHeight: '24px', fontWeight: 600,
+                  color: 'var(--dsw-alias-label-primary)', fontVariantNumeric: 'tabular-nums',
+                },
+              }, money(total)),
+            ]),
+            periodBox,
+            divider('hr1'),
+            statRow('cache', t('cache'), ktok(cached), money(cacheCost), total ? cacheCost / total : 0),
+            statRow('input', t('input'), ktok(uncached), money(inputCost), total ? inputCost / total : 0),
+            statRow('output', t('output'), ktok(output), money(outputCost), total ? outputCost / total : 0),
+            divider('hr2'),
+            sectionLabel('sec', turnLabel),
+            flatRow('turn', t('cost'), turnCost === null ? '—' : money(turnCost), tone),
             flatRow('turnCache', t('turnCache'), turnCache === null ? '—' : money(turnCache), red || hitWarn ? tone : undefined),
-            h('div', { key: 'reason', style: { ...small, color: tone } }, reason),
-            gapLine === null ? null : h('div', {
-              key: 'gap',
-              style: { ...small, color: 'var(--dsw-alias-label-secondary)' },
-            }, gapLine),
-            h('div', {
-              key: 'rule',
-              style: { ...small, color: 'var(--dsw-alias-label-tertiary)' },
-            }, ruleLine),
-            h('div', {
-              key: 'source',
-              style: { ...small, color: 'var(--dsw-alias-label-tertiary)' },
-            }, sourceLine),
+            statusRow,
+            hint('reason', reason, tone),
+            divider('hr3'),
+            hint('rule', ruleLine),
+            hint('source', sourceLine),
+            unknownLine === null ? null : hint('unknown', unknownLine, 'var(--dsw-alias-state-warn-primary)'),
           ])
         : null
 
@@ -351,6 +515,8 @@ window.__ModuleLoader__.load({
           type: 'button',
           'aria-haspopup': 'dialog',
           'aria-expanded': open,
+          // 悬停就能看到计价时段，不必先点开面板。
+          title: `${price.peak ? t('peakNow') : t('offNow')} · ${t('peakWindows')}`,
           onClick: () => setOpen(!open),
           onMouseEnter: () => setHover(true),
           onMouseLeave: () => setHover(false),
@@ -373,49 +539,72 @@ window.__ModuleLoader__.load({
       ])
     }
 
+    // 所有提示句都控制在面板宽度内（≤ 24 字），避免出现只剩两三个字的短换行。
     const ZH = {
       title: '会话成本',
       total: '累计',
       turn: '本轮',
       lastTurn: '上一轮',
-      turnCache: '本轮缓存命中',
+      cost: '成本合计',
+      turnCache: '缓存命中',
       cache: '缓存命中',
       input: '非缓存',
       output: '输出',
-      reasonOk: '本轮缓存命中未到 ¥{warn} 黄线，所以不变色。',
-      reasonWarn: '本轮缓存命中已过 ¥{warn} 黄线，所以变黄。',
-      reasonRed: '本轮缓存命中已过 ¥{red} 红线，所以变红。',
-      reasonUnknown: '本轮起点未知（刚刷新或刚挂载），下一轮开始后恢复。',
-      toWarn: '距黄线（¥{warn}）还差',
-      toRed: '距红线（¥{red}）还差',
-      rule: '判据只看本轮缓存命中：¥{warn} 黄、¥{red} 红',
-      peak: '高峰',
-      offPeak: '空闲',
-      ledgerExact: '累计按每步请求时的峰谷价分别计价，历史不会随后续时段变化。',
-      ledgerFallback: '宿主计价未接入，累计暂按当前价折算，跨峰谷分界会漂移。',
-      ledgerUnknown: '含未收录模型，按默认价估算：{models}',
+      reasonOk: '本轮缓存未到 ¥{warn} 黄线，不变色',
+      reasonWarn: '本轮缓存已过 ¥{warn} 黄线，变黄',
+      reasonRed: '本轮缓存已过 ¥{red} 红线，变红',
+      reasonUnknown: '本轮起点未知，下一轮恢复',
+      toWarn: '距黄线还差',
+      toRed: '距红线还差',
+      rule: '判据：本轮缓存 ¥{warn} 黄、¥{red} 红',
+      peakNow: '高峰时段计价',
+      offNow: '空闲时段计价',
+      cacheRate: '缓存命中 ¥{rate}/M',
+      peakWindows: '高峰：工作日 9–12、14–18 点',
+      offWindows: '其余时段与周末按空闲价',
+      nextPeak: '距进入高峰 {d}（{at}）',
+      nextOff: '距进入空闲 {d}（{at}）',
+      nextUnknown: '距切换时间未知',
+      stOk: '正常',
+      stWarn: '注意',
+      stRed: '超限',
+      stUnknown: '待定',
+      ledgerExact: '累计按每步当时价计，不漂移',
+      ledgerFallback: '累计暂按现价折算，会漂移',
+      ledgerUnknown: '未收录模型按默认价：{models}',
     }
     const EN = {
       title: 'Session cost',
       total: 'total',
       turn: 'this turn',
       lastTurn: 'last turn',
-      turnCache: 'cache hit this turn',
+      cost: 'cost',
+      turnCache: 'cache hit',
       cache: 'cache hit',
       input: 'uncached',
       output: 'output',
-      reasonOk: 'Cache-read cost of this turn is below the ¥{warn} amber line, so the reading stays neutral.',
-      reasonWarn: 'Cache-read cost of this turn passed ¥{warn}, so the reading turned amber.',
-      reasonRed: 'Cache-read cost of this turn passed ¥{red}, so the reading turned red.',
-      reasonUnknown: 'Turn start unknown (just reloaded); it recovers on the next turn.',
-      toWarn: 'Until the amber line (¥{warn}):',
-      toRed: 'Until the red line (¥{red}):',
-      rule: 'Judged on cache-read cost of this turn: ¥{warn} amber, ¥{red} red',
-      peak: 'peak',
-      offPeak: 'off-peak',
-      ledgerExact: 'Total is priced per step at the peak/off-peak rate in force when that step ran, so it never drifts later.',
-      ledgerFallback: 'Host ledger unavailable; the total is converted at the current rate and drifts across peak boundaries.',
-      ledgerUnknown: 'Priced at the default rate for models it does not know: {models}',
+      reasonOk: 'Cache cost this turn is below the ¥{warn} amber line; the reading stays neutral.',
+      reasonWarn: 'Cache cost this turn passed ¥{warn}; the reading turned amber.',
+      reasonRed: 'Cache cost this turn passed ¥{red}; the reading turned red.',
+      reasonUnknown: 'Turn start unknown; it recovers on the next turn.',
+      toWarn: 'Until the amber line:',
+      toRed: 'Until the red line:',
+      rule: 'Judged on cache cost this turn: ¥{warn} amber, ¥{red} red',
+      peakNow: 'peak pricing',
+      offNow: 'off-peak pricing',
+      cacheRate: 'cache hit ¥{rate}/M',
+      peakWindows: 'Peak: weekdays 9–12, 14–18',
+      offWindows: 'Off-peak the rest of the time',
+      nextPeak: 'Peak in {d} ({at})',
+      nextOff: 'Off-peak in {d} ({at})',
+      nextUnknown: 'Next switch unknown',
+      stOk: 'ok',
+      stWarn: 'watch',
+      stRed: 'over',
+      stUnknown: 'n/a',
+      ledgerExact: 'Each step priced at its own rate; the total never drifts.',
+      ledgerFallback: 'Host ledger unavailable; the total is converted at the current rate and drifts.',
+      ledgerUnknown: 'Unknown models priced at the default rate: {models}',
     }
 
     return {
