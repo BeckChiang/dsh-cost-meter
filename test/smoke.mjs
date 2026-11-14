@@ -138,6 +138,17 @@ function snapOf(node) {
 }
 
 let cleanups = []
+
+function nodesOf(node, out = []) {
+  if (node === null || node === undefined || node === false) return out
+  if (Array.isArray(node)) { for (const n of node) nodesOf(n, out); return out }
+  if (typeof node === 'string' || typeof node === 'number') return out
+  if (!node || !node.props) return out
+  out.push(node)
+  nodesOf(node.props.children, out)
+  return out
+}
+
 async function mount() {
   for (const c of cleanups) { try { c() } catch (_) {} }
   cleanups = []
@@ -174,6 +185,7 @@ check('显示距切换倒计时', /距进入高峰|距进入空闲|距切换时�
 check('显示状态徽标', /正常|注意|超限|待定/.test(snap.all))
 check('显示本轮分区', has('本轮') || has('上一轮'))
 check('显示成本合计行', has('成本合计'))
+check('显示「成本构成」分区', has('成本构成'))
 check('显示判据短句', /判据：本轮缓存 ¥0\.1 黄、¥0\.3 红/.test(snap.all))
 check('账本缺席时说明按现价折算', has('累计暂按现价折算，会漂移'))
 check('未出现旧长句', !has('历史不会随后续时段变化') && !has('距黄线（'))
@@ -197,6 +209,20 @@ check('账本命中：点名未收录模型', /未收录模型按默认价：mys
 check('账本命中：不显示按现价折算', !has('累计暂按现价折算，会漂移'))
 check('fetch 命中 ledger 路由', String(globalThis.__lastUrl || '').startsWith('/api/cost-meter/ledger?id=s1'), globalThis.__lastUrl)
 check('fetch 带面板头', !!globalThis.__lastInit && globalThis.__lastInit.headers['x-cost-meter'] === '1')
+
+// 单条三色堆叠条：整条 = 累计成本，宽度按成本占比
+const all = nodesOf(tree)
+const bar = all.find((n) => n.key === 'split-bar')
+check('存在单条堆叠条', !!bar)
+const segs = bar ? (Array.isArray(bar.props.children) ? bar.props.children.flat(9) : []).filter(Boolean) : []
+check('堆叠条分三段', segs.length === 3, String(segs.length))
+const widths = segs.map((x) => parseFloat(String(x.props.style.width)))
+check('三段宽度合计 100%', Math.abs(widths.reduce((a, b) => a + b, 0) - 100) < 0.5, widths.join(' / '))
+const colors = new Set(segs.map((x) => String(x.props.style.background)))
+check('三段颜色互不相同', colors.size === 3, [...colors].join(' / '))
+check('三段宽度与账本占比一致', Math.abs(widths[0] - 16.13) < 0.3 && Math.abs(widths[1] - 53.13) < 0.3 && Math.abs(widths[2] - 30.74) < 0.3, widths.join(' / '))
+check('图例给出成本占比', ['16%', '53%', '31%'].every((x) => snap.all.includes(x)), snap.all)
+check('图例给出 token 量', ['1M', '2M', '500k'].every((x) => snap.all.includes(x)), snap.all)
 
 // ---- 3. 峰谷两态（拨时钟）------------------------------------------------
 for (const [label, iso, expect] of [

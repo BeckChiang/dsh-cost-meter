@@ -308,44 +308,67 @@ window.__ModuleLoader__.load({
             ? t('stUnknown')
             : t('stOk')
 
-      // 行内三栏：中文标签 / token 数 / 占比条 / 金额。标签与数字分列，避免「数字挤在标签里」。
-      const statRow = (key, label, tokens, value, share) =>
+      // 成本构成：一条三色堆叠条，整条 = 累计总成本（100%），每段按该项成本占比切分。
+      // 颜色固定「缓存命中=品牌蓝、非缓存=琥珀、输出=红」，越靠右越贵，图例里带色点对齐。
+      const SPLIT = [
+        { key: 'cache', label: t('cache'), tokens: cached, value: cacheCost, color: 'var(--dsw-alias-brand-primary)' },
+        { key: 'input', label: t('input'), tokens: uncached, value: inputCost, color: 'var(--dsw-alias-state-warn-primary)' },
+        { key: 'output', label: t('output'), tokens: output, value: outputCost, color: 'var(--dsw-alias-state-error-primary)' },
+      ]
+      const shareOf = (v) => (total > 0 ? Math.max(0, Math.min(1, v / total)) : 0)
+      const pct = (v) => `${Math.round(shareOf(v) * 100)}%`
+
+      const splitBar = h('div', {
+        key: 'split-bar',
+        style: {
+          display: 'flex', height: '8px', borderRadius: '4px', overflow: 'hidden',
+          background: 'var(--dsw-alias-border-l1)', marginTop: '2px',
+        },
+      }, SPLIT.map((s) => h('span', {
+        key: s.key,
+        title: `${s.label} ${pct(s.value)}`,
+        style: {
+          display: 'block', height: '100%', width: `${(shareOf(s.value) * 100).toFixed(2)}%`,
+          background: s.color, flex: 'none',
+        },
+      })))
+
+      // 图例行：色点 + 名称 + token 量 + 成本占比 + 金额，三行左右对齐，和上面那条堆叠条一一对应。
+      const legendRow = (s) =>
         h('div', {
-          key,
-          style: { display: 'flex', alignItems: 'center', gap: '8px', lineHeight: '20px' },
+          key: s.key,
+          style: { display: 'flex', alignItems: 'center', gap: '6px', lineHeight: '18px' },
         }, [
           h('span', {
+            key: 'd',
+            style: { flex: 'none', width: '6px', height: '6px', borderRadius: '3px', background: s.color },
+          }),
+          h('span', {
             key: 'l',
-            style: { flex: 'none', width: '58px', color: 'var(--dsw-alias-label-secondary)' },
-          }, label),
+            style: { flex: 'none', color: 'var(--dsw-alias-label-secondary)' },
+          }, s.label),
           h('span', {
             key: 't',
             style: {
-              flex: 'none', width: '50px', textAlign: 'right', fontSize: '11px',
+              marginLeft: 'auto', flex: 'none', width: '46px', textAlign: 'right', fontSize: '11px',
               color: 'var(--dsw-alias-label-tertiary)', fontVariantNumeric: 'tabular-nums',
             },
-          }, tokens),
+          }, ktok(s.tokens)),
           h('span', {
-            key: 'b',
+            key: 'p',
             style: {
-              flex: '1 1 auto', height: '4px', borderRadius: '2px',
-              background: 'var(--dsw-alias-border-l1)', overflow: 'hidden',
+              flex: 'none', width: '36px', textAlign: 'right', fontSize: '11px',
+              color: 'var(--dsw-alias-label-secondary)', fontVariantNumeric: 'tabular-nums',
             },
-          }, h('span', {
-            style: {
-              display: 'block', height: '100%',
-              width: `${Math.round(Math.max(0, Math.min(1, share)) * 100)}%`,
-              background: 'var(--dsw-alias-brand-primary)', opacity: 0.8,
-            },
-          })),
+          }, pct(s.value)),
           h('span', {
             key: 'v',
             style: {
-              flex: 'none', width: '60px', textAlign: 'right', whiteSpace: 'nowrap',
+              flex: 'none', width: '56px', textAlign: 'right', whiteSpace: 'nowrap',
               color: 'var(--dsw-alias-label-primary)', fontWeight: 600,
               fontVariantNumeric: 'tabular-nums',
             },
-          }, value),
+          }, money(s.value)),
         ])
 
       const flatRow = (key, label, value, color) =>
@@ -485,9 +508,9 @@ window.__ModuleLoader__.load({
             ]),
             periodBox,
             divider('hr1'),
-            statRow('cache', t('cache'), ktok(cached), money(cacheCost), total ? cacheCost / total : 0),
-            statRow('input', t('input'), ktok(uncached), money(inputCost), total ? inputCost / total : 0),
-            statRow('output', t('output'), ktok(output), money(outputCost), total ? outputCost / total : 0),
+            sectionLabel('split', t('split')),
+            splitBar,
+            ...SPLIT.map(legendRow),
             divider('hr2'),
             sectionLabel('sec', turnLabel),
             flatRow('turn', t('cost'), turnCost === null ? '—' : money(turnCost), tone),
@@ -546,6 +569,7 @@ window.__ModuleLoader__.load({
       turn: '本轮',
       lastTurn: '上一轮',
       cost: '成本合计',
+      split: '成本构成',
       turnCache: '缓存命中',
       cache: '缓存命中',
       input: '非缓存',
@@ -579,6 +603,7 @@ window.__ModuleLoader__.load({
       turn: 'this turn',
       lastTurn: 'last turn',
       cost: 'cost',
+      split: 'cost split',
       turnCache: 'cache hit',
       cache: 'cache hit',
       input: 'uncached',
