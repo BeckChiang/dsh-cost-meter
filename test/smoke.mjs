@@ -248,6 +248,30 @@ check('三段宽度与账本占比一致', Math.abs(widths[0] - 16.13) < 0.3 && 
 check('图例给出成本占比', ['16%', '53%', '31%'].every((x) => snap.all.includes(x)), snap.all)
 check('图例给出 token 量', ['1M', '2M', '500k'].every((x) => snap.all.includes(x)), snap.all)
 
+// 容器化：每个分区都应是「描边框 + 小标题」，不再用分隔线断句。
+const textOf = (n) => {
+  const out = []
+  const walk = (x) => {
+    if (x === null || x === undefined || x === false) return
+    if (typeof x === 'string' || typeof x === 'number') { out.push(String(x)); return }
+    if (Array.isArray(x)) { x.forEach(walk); return }
+    if (x.props) walk(x.props.children)
+  }
+  walk(n)
+  return out.join(' ')
+}
+const boxNodes = nodesOf(tree).filter((n) => n.props && n.props.style
+  && n.props.style.border === '1px solid var(--dsw-alias-border-l1)'
+  && n.props.style.flexDirection === 'column')
+check('容器：至少 6 个描边框', boxNodes.length >= 6, String(boxNodes.length))
+const boxTexts = boxNodes.map((n) => textOf(n))
+for (const title of ['累计', 'DeepSeek 官方价', '成本构成', '本轮', '趋势', '判据']) {
+  check(`容器：有「${title}」分区`, boxTexts.some((x) => x.includes(title)), boxTexts.join(' || '))
+}
+check('容器：累计金额落在自己的框内', boxTexts.some((x) => /累计/.test(x) && /¥0\.0719|¥0\.072/.test(x)))
+check('容器：本轮框内同时有成本合计与状态徽标',
+  boxTexts.some((x) => x.includes('本轮') && x.includes('成本合计') && /正常|注意|超限|待定/.test(x)))
+
 // ---- 2b. 红线：上下文与累计同时越线 ---------------------------------------
 fetchBody = {
   ok: true, sessionId: 's1', hasPricedSteps: true,

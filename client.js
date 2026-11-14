@@ -123,6 +123,47 @@ window.__ModuleLoader__.load({
     const fill = (s, vars) =>
       String(s == null ? '' : s).replace(/\{(\w+)\}/g, (m, k) => (vars[k] === undefined ? '' : String(vars[k])))
 
+  // 容器：描边框 + 小标题（右侧可带一行次要信息），内容竖排。
+  // 面板里每一块都走这套壳，层次统一，不再靠分隔线断句。
+  const boxTitle = (key, title, right) =>
+    h('div', {
+      key,
+      style: { display: 'flex', alignItems: 'baseline', gap: '8px', lineHeight: '16px', marginBottom: '2px' },
+    }, [
+      h('span', {
+        key: 't',
+        style: {
+          flex: 'none', fontSize: '11px', fontWeight: 600, letterSpacing: '0.04em',
+          color: 'var(--dsw-alias-label-tertiary)',
+        },
+      }, title),
+      right === null || right === undefined
+        ? null
+        : h('span', {
+            key: 'r',
+            style: {
+              marginLeft: 'auto', fontSize: '11px', fontVariantNumeric: 'tabular-nums',
+              color: 'var(--dsw-alias-label-secondary)', whiteSpace: 'nowrap',
+            },
+          }, right),
+    ])
+
+  const box = (key, title, children, right) =>
+    h('div', {
+      key,
+      style: {
+        marginTop: '6px', padding: '6px 8px 7px', borderRadius: 'var(--dsw-radius-sm)',
+        border: '1px solid var(--dsw-alias-border-l1)',
+        display: 'flex', flexDirection: 'column', gap: '1px',
+      },
+    }, [boxTitle('h', title, right)].concat(children))
+
+  const hint = (key, text, color) =>
+    h('div', {
+      key,
+      style: { fontSize: '11px', lineHeight: '16px', color: color || 'var(--dsw-alias-label-tertiary)' },
+    }, text)
+
     function CostMeter(props) {
       const { useProjection, sessionId, t } = props
 
@@ -379,21 +420,7 @@ window.__ModuleLoader__.load({
           }, value),
         ])
       const trendBox = showTrend
-        ? h('div', {
-            key: 'trend',
-            style: {
-              marginTop: '6px', padding: '4px 8px 6px', borderRadius: 'var(--dsw-radius-sm)',
-              border: '1px solid var(--dsw-alias-border-l1)',
-              display: 'flex', flexDirection: 'column', gap: '0px',
-            },
-          }, [
-            h('div', {
-              key: 'tl',
-              style: {
-                fontSize: '11px', lineHeight: '16px', fontWeight: 600, marginBottom: '2px',
-                color: 'var(--dsw-alias-label-tertiary)', letterSpacing: '0.04em',
-              },
-            }, t('trend')),
+        ? box('trend', t('trend'), [
             trendRow('ctx', t('ctxPerStep'), ktok(ctxNow), 'var(--dsw-alias-brand-primary)'),
             trendRow('grow', t('growthPerTurn'), growText, growTone),
             predictText === null
@@ -404,7 +431,6 @@ window.__ModuleLoader__.load({
               : trendRow('switch', t('switchCost'), switchText, 'var(--dsw-alias-brand-primary)'),
           ])
         : null
-
       const ruleCtx = led ? fill(t('ruleCtx'), lv) : null
       const ruleCost = led ? fill(t('ruleCost'), lv) : fill(t('rule'), lvLegacy)
       // 计价口径写清楚：账本在就说明「历史按当时价」，没接上就明说在按现价折算。
@@ -503,54 +529,8 @@ window.__ModuleLoader__.load({
           }, value),
         ])
 
-      // 分区标题：小一号、加粗、带字距，和正文行拉开层次。
-      const sectionLabel = (key, text) =>
-        h('div', {
-          key,
-          style: {
-            fontSize: '11px', lineHeight: '16px', fontWeight: 600,
-            color: 'var(--dsw-alias-label-tertiary)', letterSpacing: '0.04em',
-          },
-        }, text)
-
-      const hint = (key, text, color) =>
-        h('div', {
-          key,
-          style: { fontSize: '11px', lineHeight: '16px', color: color || 'var(--dsw-alias-label-tertiary)' },
-        }, text)
-
-      const divider = (key) =>
-        h('div', {
-          key,
-          style: { height: '1px', background: 'var(--dsw-alias-border-l1)', margin: '6px 0' },
-        })
-
-      // 计时段：当前是高峰还是空闲、单价多少、窗口怎么算、多久后切换。
-      // 四行短句，任意一行都不会折行，也不会和判据混在一起。
-      const periodBox = h('div', {
-        key: 'period',
-        style: {
-          marginTop: '6px', padding: '6px 8px', borderRadius: 'var(--dsw-radius-sm)',
-          border: '1px solid var(--dsw-alias-border-l1)',
-          display: 'flex', flexDirection: 'column', gap: '1px',
-        },
-      }, [
-        h('div', {
-          key: 'h',
-          style: { display: 'flex', alignItems: 'baseline', gap: '8px', lineHeight: '16px' },
-        }, [
-          h('span', {
-            key: 'b',
-            style: { flex: 'none', fontSize: '11px', fontWeight: 600, color: 'var(--dsw-alias-label-secondary)' },
-          }, t('priceBrand')),
-          h('span', {
-            key: 'r',
-            style: {
-              marginLeft: 'auto', fontSize: '11px', fontVariantNumeric: 'tabular-nums',
-              color: 'var(--dsw-alias-label-secondary)', whiteSpace: 'nowrap',
-            },
-          }, fill(t('cacheRate'), { rate: String(price.cacheRead) })),
-        ]),
+      // 计时段：官方价口径 + 当前峰谷 + 窗口 + 倒计时。
+      const periodBox = box('period', t('priceBrand'), [
         h('div', {
           key: 't',
           style: { display: 'flex', alignItems: 'center', gap: '6px', lineHeight: '18px' },
@@ -573,7 +553,7 @@ window.__ModuleLoader__.load({
           ? fill(price.peak ? t('nextOff') : t('nextPeak'), { d: dur(boundary.mins), at: boundary.label })
           : t('nextUnknown'), 'var(--dsw-alias-label-secondary)'),
         hint('note', t('priceNote'), 'var(--dsw-alias-label-tertiary)'),
-      ])
+      ], fill(t('cacheRate'), { rate: String(price.cacheRead) }))
 
       // 状态徽标 + 距阈值差额：颜色含义直接写在徽标文字里，不用只靠颜色猜。
       const statusRow = h('div', {
@@ -615,40 +595,32 @@ window.__ModuleLoader__.load({
               display: 'flex', flexDirection: 'column', gap: '2px',
             },
           }, [
-            // 累计：标签小、金额大，一眼分清「标题」与「读数」。
-            h('div', {
-              key: 'head',
-              style: { display: 'flex', alignItems: 'baseline', gap: '8px' },
-            }, [
-              h('span', {
-                key: 'l',
-                style: { fontSize: '11px', color: 'var(--dsw-alias-label-tertiary)' },
-              }, t('total')),
-              h('span', {
+            // 每个分区一个描边框 + 小标题，从上到下同一种壳。
+            // 累计：金额是本面板的主角，18px 独占一行。
+            box('total', t('total'), [
+              h('div', {
                 key: 'v',
                 style: {
-                  marginLeft: 'auto', fontSize: '18px', lineHeight: '24px', fontWeight: 600,
+                  fontSize: '18px', lineHeight: '24px', fontWeight: 600,
                   color: 'var(--dsw-alias-label-primary)', fontVariantNumeric: 'tabular-nums',
                 },
               }, money(total)),
             ]),
             periodBox,
-            divider('hr1'),
-            sectionLabel('split', t('split')),
-            splitBar,
-            ...SPLIT.map(legendRow),
-            divider('hr2'),
-            sectionLabel('sec', turnLabel),
-            flatRow('turn', t('cost'), turnCost === null ? '—' : money(turnCost), tone),
-            flatRow('turnCache', t('turnCache'), turnCache === null ? '—' : money(turnCache), red || hitWarn ? tone : undefined),
-            statusRow,
-            hint('reason', reason, tone),
+            box('split', t('split'), [splitBar].concat(SPLIT.map(legendRow))),
+            box('turn', turnLabel, [
+              flatRow('turn', t('cost'), turnCost === null ? '—' : money(turnCost), tone),
+              flatRow('turnCache', t('turnCache'), turnCache === null ? '—' : money(turnCache), red || hitWarn ? tone : undefined),
+              statusRow,
+              hint('reason', reason, tone),
+            ]),
             trendBox,
-            divider('hr3'),
-            hint('rule-cost', ruleCost, 'var(--dsw-alias-label-tertiary)'),
-            ruleCtx === null ? null : hint('rule-ctx', ruleCtx, 'var(--dsw-alias-label-tertiary)'),
-            hint('source', sourceLine),
-            unknownLine === null ? null : hint('unknown', unknownLine, 'var(--dsw-alias-state-warn-primary)'),
+            box('rule', t('judge'), [
+              hint('rule-cost', ruleCost, 'var(--dsw-alias-label-tertiary)'),
+              ruleCtx === null ? null : hint('rule-ctx', ruleCtx, 'var(--dsw-alias-label-tertiary)'),
+              hint('source', sourceLine),
+              unknownLine === null ? null : hint('unknown', unknownLine, 'var(--dsw-alias-state-warn-primary)'),
+            ]),
           ])
         : null
 
@@ -734,6 +706,7 @@ window.__ModuleLoader__.load({
       gapToWarn: '距黄线：每步 +{ctx} / 累计 +{cost}',
       gapToRed: '距红线：每步 +{ctx} / 累计 +{cost}',
       trend: '趋势',
+      judge: '判据',
       ctxPerStep: '每步上下文',
       growthPerTurn: '每轮增长',
       turnsCost: '再 {n} 轮成本',
@@ -785,6 +758,7 @@ window.__ModuleLoader__.load({
       gapToWarn: 'Until amber: +{ctx} per step / +{cost} total',
       gapToRed: 'Until red: +{ctx} per step / +{cost} total',
       trend: 'Trend',
+      judge: 'rules',
       ctxPerStep: 'context per step',
       growthPerTurn: 'growth per turn',
       turnsCost: '{n} more turns cost',
