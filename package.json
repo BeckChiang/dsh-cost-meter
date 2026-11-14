@@ -1,5 +1,5 @@
 {
-  "name": "dsh-cost-meter",
+  "name": "@beckchiang/dsh-cost-meter",
   "version": "2.0.0",
   "description": "Per-step session cost meter for the DeepSeek Harness composer dock: cumulative cost split, this-turn/last-turn cost, peak/off-peak pricing frozen at each request's start time, and context-vs-budget advice for when to hand off.",
   "type": "module",

@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.0.0 补充（发布改名）
+
+- npm 包名定为 `@beckchiang/dsh-cost-meter`：无 scope 的 `dsh-cost-meter` 已被他人（smallsun）占用且无法发布。
+- `package.json` 的 `name`、`cordis.patch.yml` 的 `name`、`index.js` 的 `export const name`、`client.js` 的 module id 同步改为 scoped 名；插件 id 因此变为 `@beckchiang/dsh-cost-meter`，装过旧名的要先 `remove_bundle dsh-cost-meter` 再装。
+
 ## 2.0.0 — 2026-11-14
 
 整数版本收口，**接口与 1.3.x 完全兼容**（`GET /api/cost-meter/ledger`、`lib/ledger.mjs` 导出、`conversation.composer.dock` 面板），跨机可直接覆盖旧目录。

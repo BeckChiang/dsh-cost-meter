@@ -1,5 +1,7 @@
 # dsh-cost-meter
 
+> npm 包名：`@beckchiang/dsh-cost-meter`（`dsh-cost-meter` 已被他人占用）
+
 **Input-dock session cost meter for DeepSeek Harness — every step is priced at the peak/off-peak rate that was actually in force when that request ran, so past amounts never get rewritten by a later time-of-day.** · **DeepSeek Harness 输入框下方的会话成本计：每一步都按它真正发生时的峰谷价计价，历史金额不会被后来的时段改写。**
 
 <p align="center">
@@ -147,7 +149,8 @@ Host 路由用 `session.seq` 做 memo（最多 32 个会话）：seq 没变就�
 ### npm（发布后）
 
 ```bash
-plugin_manager install_bundle dsh-cost-meter
+plugin_manager install_bundle @beckchiang/dsh-cost-meter
+# 或：npm i -g @beckchiang/dsh-cost-meter 后指向全局目录
 ```
 
 ### 跨机 zip

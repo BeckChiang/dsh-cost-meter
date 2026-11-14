@@ -1,4 +1,4 @@
-// Host half of dsh-cost-meter.
+// Host half of @beckchiang/dsh-cost-meter.
 //
 // The client projection `tokenUsage` only carries cumulative token counts, so the
 // meter had to price the whole history at "now" — every peak/off-peak boundary or
@@ -12,7 +12,7 @@
 // the other local plugins). Read-only: it never writes, mutates or replays.
 import { buildLedger } from './lib/ledger.mjs';
 
-export const name = 'dsh-cost-meter';
+export const name = '@beckchiang/dsh-cost-meter';
 export const inject = ['webServer', 'sessions'];
 
 const LEDGER_PATH = '/api/cost-meter/ledger';

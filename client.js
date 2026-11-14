@@ -1,5 +1,5 @@
 window.__ModuleLoader__.load({
-  id: 'dsh-cost-meter',
+  id: '@beckchiang/dsh-cost-meter',
   factory(require) {
     const React = require('react')
     const h = React.createElement
